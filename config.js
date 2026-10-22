@@ -7,7 +7,7 @@ self.APP_CONFIG = {
   apiUrl: "https://script.google.com/macros/s/AKfycbwBFpnDa1aYeqrFwBMF98IPV7YuuqP-SDKL0EVNJx3AbLfkKnc5A3v5cJ05enEEcmA1dw/exec",
 
   // 2) Firebase → Project settings → General → Your apps → SDK setup and configuration → Config
-const firebaseConfig = {
+firebaseConfig = {
   apiKey: "AIzaSyA6fujJCoGU1WS82FMLG_y9AMwR99fzShY",
   authDomain: "mee-ngar-pesana.firebaseapp.com",
   projectId: "mee-ngar-pesana",
