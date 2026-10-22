@@ -17,12 +17,4 @@ self.APP_CONFIG = {
 };
 
   // 3) Firebase → Project settings → Cloud Messaging → Web Push certificates → Key pair
-  vapidKey: "var admin = require("firebase-admin");
-
-var serviceAccount = require("path/to/serviceAccountKey.json");
-
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
-});
-"
-};
+  vapidKey: "BAzi7dqYfFne5n9l7sqd5WQTi7wlgj8VuisaJr1VTe6LYeLrH7X3fVBBIpcoK6bTN2OZSccw1Ib35NIIaqlwq7Y"
