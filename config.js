@@ -4,7 +4,7 @@
    ============================================================ */
 self.APP_CONFIG = {
   // 1) URL Web App Apps Script anda (berakhir dengan /exec)
-  apiUrl: "https://script.google.com/macros/s/AKfycbyzhOUgmL1yjUBfe_cI96_GVFtQrVH9ioyTr2vj5iGFblnnj88X5ExUst-xs6bsFtqdMA/exec",
+  apiUrl: "https://script.google.com/macros/s/AKfycbwBFpnDa1aYeqrFwBMF98IPV7YuuqP-SDKL0EVNJx3AbLfkKnc5A3v5cJ05enEEcmA1dw/exec",
 
   // 2) Firebase → Project settings → General → Your apps → SDK setup and configuration → Config
   firebase: {

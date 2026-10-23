@@ -366,6 +366,7 @@ nav.tabs .bdg{position:absolute;top:4px;left:calc(50% + 8px);min-width:18px;heig
   </section>
 
   <section class="screen" id="scr-tetapan" hidden>
+    <div class="card"><h3>Semakan sistem <small>setup & notifikasi</small></h3><div id="diagBox"><button class="btn line wide" type="button" id="diagBtn">Semak sekarang</button></div></div>
     <div class="card">
       <h3>Menu produk <small id="prodCount"></small></h3>
       <div id="prodRows"></div>
@@ -536,7 +537,8 @@ function renderWelcome(){
   const names=L().everyone;
   $("#welcomePeople").replaceChildren(!S.loaded?(S.err?h("div",{class:"notice warn",style:"display:grid;gap:8px;text-align:left"},h("b",null,S.err[0]),h("span",null,S.err[1]),
       h("span",{style:"font-size:12.5px;opacity:.85;word-break:break-all"},"apiUrl sekarang: "+(CFG.apiUrl||"(kosong)")),
-      h("button",{type:"button",onclick:()=>{S.err="";renderWelcome();setSync("busy");refresh();}},"Cuba lagi")):h("p",{class:"hint"},"Memuatkan senarai nama…")):
+      h("button",{type:"button",onclick:()=>{S.err="";renderWelcome();setSync("busy");refresh();}},"Cuba lagi"),
+      h("button",{type:"button",onclick:e=>{const box=h("div",{style:"display:grid;gap:10px"});e.currentTarget.replaceWith(box);renderDiag(box);}},"Semakan sistem penuh")):h("p",{class:"hint"},"Memuatkan senarai nama…")):
     h("div",{class:"field"},names.length?null:h("p",{class:"hint"},"Belum ada nama. Tekan Tambah nama untuk mula."),peopleGrid(names,S.me,n=>setMe(n),"pelayan")));
 }
 $("#meBtn").onclick=()=>{renderWelcome();$("#welcome").hidden=false;};
@@ -1159,6 +1161,49 @@ function openFromUrl(u){
     if(t&&TABS.includes(t)) showTab(t); if(g&&STAGES.some(s=>s.k===g)){S.seg=g;segTouched=true;renderOrders();} refresh(); }catch(e){}
 }
 
+
+/* ---------- semakan sistem ---------- */
+const NEED_VERSI="v8";
+async function runDiag(){
+  const rows=[];
+  const ok=(t,d)=>rows.push([true,t,d||""]), bad=(t,d)=>rows.push([false,t,d]);
+  const filled=v=>v&&!/TAMPAL/.test(v);
+  if(!filled(CFG.apiUrl)||!/\/exec$/.test(CFG.apiUrl)) bad("config.js: apiUrl","Mesti URL Web App Apps Script yang berakhir dengan /exec.");
+  else ok("config.js: apiUrl");
+  const fb=CFG.firebase||{};
+  const fbOk=["apiKey","authDomain","projectId","messagingSenderId","appId"].every(k=>filled(fb[k]));
+  fbOk?ok("config.js: Firebase"):bad("config.js: Firebase","Isi 6 nilai firebase daripada Firebase → Project settings → General.");
+  filled(CFG.vapidKey)&&/^B[\w-]{80,}$/.test(CFG.vapidKey)?ok("config.js: kunci VAPID"):bad("config.js: kunci VAPID","Firebase → Project settings → Cloud Messaging → Web Push certificates → Key pair (bermula dengan B).");
+  let p=null;
+  try{ p=await run("api_ping"); ok("Sambungan ke Google Sheet","Versi pelayan "+p.versi+" · "+p.staf+" staf aktif"); }
+  catch(e){ const x=explainErr(e); bad("Sambungan ke Google Sheet",x[0]+" — "+x[1]); }
+  if(p){
+    p.versi===NEED_VERSI?ok("Code.gs versi terkini"):bad("Code.gs versi terkini","Pelayan "+p.versi+", app perlukan "+NEED_VERSI+". Tampal Code.gs baru → Deploy → New version.");
+    p.push?ok("Kunci Firebase di Apps Script","Projek "+p.projek):bad("Kunci Firebase di Apps Script","Apps Script → Project Settings → Script properties → FIREBASE_SA (isi fail .json).");
+    p.peringatan?ok("Peringatan setiap 3 minit"):bad("Peringatan setiap 3 minit","Dalam Apps Script pilih fungsi setupPush → Run sekali.");
+    if(p.push&&fbOk&&p.projek&&fb.projectId&&p.projek!==fb.projectId) bad("Projek Firebase sama","config.js ("+fb.projectId+") berbeza daripada Apps Script ("+p.projek+").");
+  }
+  const st=pushState();
+  st==="on"?ok("Notifikasi peranti ini","Aktif"+(p?" · "+p.peranti+" peranti berdaftar":"")):
+    bad("Notifikasi peranti ini",{off:"Tekan Hidupkan notifikasi di bawah.",denied:"Disekat — benarkan notifikasi dalam tetapan pelayar untuk laman ini.",noconfig:"Lengkapkan config.js dahulu.","ios-install":"iPhone/iPad: Kongsi → Tambah ke Skrin Utama, buka dari ikon.",unsupported:"Guna Chrome (Android/PC) atau Safari (iPhone)."}[st]);
+  standalone?ok("Dipasang sebagai app"):rows.push([null,"Dipasang sebagai app",isIOS?"Safari: Kongsi → Tambah ke Skrin Utama.":"Chrome: ⋮ → Pasang app / Install app."]);
+  return rows;
+}
+function diagView(rows){
+  return h("div",{class:"rows"},rows.map(([v,t,d])=>h("div",{class:"row",style:"align-items:flex-start"},
+    h("span",{style:"width:26px;height:26px;border-radius:50%;display:grid;place-items:center;flex:none;font-weight:700;"+(v===true?"background:var(--ok-soft);color:var(--ok)":v===false?"background:var(--bad-soft);color:var(--bad)":"background:var(--warn-soft);color:var(--warn)")},v===true?"✓":v===false?"✗":"!"),
+    h("span",{style:"flex:1;min-width:0;display:grid;gap:2px"},h("b",null,t),d?h("span",{style:"font-size:13px;color:var(--muted);overflow-wrap:anywhere"},d):null))));
+}
+async function renderDiag(host){
+  host.replaceChildren(h("p",{class:"hint"},"Menyemak…"));
+  const rows=await runDiag();
+  const bad=rows.filter(r=>r[0]===false).length;
+  host.replaceChildren(h("div",{class:"notice "+(bad?"warn":""),style:bad?"":"background:var(--ok-soft);color:var(--ok)"},h("b",null,bad?bad+" perkara perlu dibetulkan":"Semua OK — sistem sedia digunakan")),
+    diagView(rows),
+    h("div",{class:"two"},h("button",{class:"btn ghost",type:"button",onclick:()=>renderDiag(host)},"Semak semula"),
+      pushState()==="on"?h("button",{class:"btn ghost",type:"button",onclick:testPush},"Uji notifikasi"):h("button",{class:"btn primary",type:"button",onclick:()=>enablePush(false).then(()=>renderDiag(host))},"Hidupkan notifikasi")));
+}
+
 /* ---------- render ---------- */
 function renderNotice(){
   const today=nowParts().date;
@@ -1183,6 +1228,7 @@ setInterval(()=>{ tickClock();
 setInterval(()=>{ if(S.tab==="pesanan"&&["baru","buat","sedia"].includes(S.seg)&&!sheets.length) renderOrders(); },30000);
 setInterval(()=>{ if(document.visibilityState==="visible"&&!busy) refresh(); },10000);
 setInterval(remind,5000);
+$("#diagBtn").onclick=()=>renderDiag($("#diagBox"));
 $("#sndBtn").onclick=openSound; renderSound(); applyWake(); initPush();
 document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible"){ tickClock(); refresh(); } });
 refresh().then(()=>{ if(!S.me) renderWelcome(); });
