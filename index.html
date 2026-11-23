@@ -94,6 +94,14 @@ main{padding-block:16px 120px}
 .tile .pn{font-weight:700;font-size:16.5px;line-height:1.2;overflow-wrap:anywhere;padding-right:24px}
 .tile .pc{font-size:12.5px;color:var(--muted)}
 .tile .dot{position:absolute;top:10px;right:10px;min-width:22px;height:22px;border-radius:11px;background:var(--warn-soft);color:var(--warn);font-family:var(--f-mono);font-size:12px;font-weight:600;display:grid;place-items:center;padding:0 6px}
+ #alarmBar{position:fixed;left:0;right:0;top:calc(env(safe-area-inset-top,0px) + 64px);z-index:35;display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--bad);color:#fff;font-weight:700;font-size:15px;box-shadow:0 6px 18px rgba(0,0,0,.25)}
+#alarmBar .at{flex:1;min-width:0;overflow-wrap:anywhere}
+#alarmBar .ab{display:flex;gap:6px;flex:none;align-items:center}
+#alarmBar button{border:0;border-radius:999px;background:#fff;color:var(--bad);font-weight:700;padding:8px 12px;font-size:13.5px}
+#alarmBar.snoozed{background:var(--warn)}
+#alarmBar.snoozed button{color:var(--warn)}
+#alarmBar .sz{font-family:var(--f-mono);font-size:13px}
+@media (prefers-reduced-motion:no-preference){#alarmBar:not(.snoozed){animation:flash 1s steps(2,start) infinite}@keyframes flash{50%{background:#7a0f08}}}
 .tile .lim{font-size:12px;font-weight:700;color:var(--ok);background:var(--ok-soft);border-radius:6px;padding:2px 7px;align-self:flex-start}
 .tile.lim-soon .lim{color:var(--warn);background:var(--warn-soft)}
 .tile.lim-over,.tile.lim-tiada{background:var(--sunk);box-shadow:none}
@@ -833,6 +841,7 @@ function openPickup(o){
 const SND={
   on: ls.get("dkp_snd")!=="0",          // bunyi amaran
   repeat: ls.get("dkp_snd_rep")!=="0",  // ulang peringatan selagi belum diurus
+  alarm: ls.get("dkp_snd_alarm")!=="0", // bunyi berterusan (alarm) sehingga diurus
   vol: Number(ls.get("dkp_snd_vol")||"0.9"),
   wake: ls.get("dkp_wake")==="1"        // kekalkan skrin menyala
 };
@@ -852,13 +861,15 @@ document.addEventListener("keydown",unlockAudio);
 // tone(freq, start, length, type)
 function tones(seq){
   if(!SND.on||!audioReady()) return false;
-  const t0=audioCtx.currentTime+0.02, master=audioCtx.createGain();
-  master.gain.value=Math.max(0.05,Math.min(1,SND.vol)); master.connect(audioCtx.destination);
+  const t0=audioCtx.currentTime+0.02, master=audioCtx.createGain(), comp=audioCtx.createDynamicsCompressor();
+  // pemampat: bunyi lebih kuat tanpa pecah
+  comp.threshold.value=-24; comp.knee.value=6; comp.ratio.value=12; comp.attack.value=0.002; comp.release.value=0.1;
+  master.gain.value=Math.max(0.05,Math.min(1,SND.vol))*1.6; master.connect(comp).connect(audioCtx.destination);
   seq.forEach(([f,at,len,type])=>{
     const o=audioCtx.createOscillator(), g=audioCtx.createGain();
     o.type=type||"triangle"; o.frequency.value=f;
     g.gain.setValueAtTime(0.0001,t0+at);
-    g.gain.exponentialRampToValueAtTime(0.9,t0+at+0.015);
+    g.gain.exponentialRampToValueAtTime(1,t0+at+0.01);
     g.gain.exponentialRampToValueAtTime(0.0001,t0+at+len);
     o.connect(g).connect(master); o.start(t0+at); o.stop(t0+at+len+0.05);
   });
@@ -871,7 +882,11 @@ const SOUNDS={
   sedia:()=>tones([[1568,0,.5,"sine"],[1047,.35,.7,"sine"],[1568,1.1,.5,"sine"],[1047,1.45,.8,"sine"]]),
   // Peringatan lewat: bip pendek berganda
   lewat:()=>tones([[1760,0,.12,"square"],[1760,.2,.12,"square"],[1760,.4,.12,"square"]]),
-  ok:()=>tones([[1047,0,.12],[1568,.1,.2]])
+  ok:()=>tones([[1047,0,.12],[1568,.1,.2]]),
+  // ALARM pesanan baru: siren tinggi-rendah (kuat, berterusan)
+  alarmBaru:()=>tones([0,1,2,3,4,5].flatMap(i=>[[2200,i*.36,.17,"square"],[1500,i*.36+.18,.17,"square"]])),
+  // ALARM sedia diambil: deringan pantas loceng
+  alarmSedia:()=>tones([0,1,2].flatMap(i=>[[1900,i*.7,.1,"sawtooth"],[1900,i*.7+.13,.1,"sawtooth"],[1900,i*.7+.26,.1,"sawtooth"],[2600,i*.7+.39,.18,"square"]]))
 };
 function alertSound(kind){
   const played=SOUNDS[kind]&&SOUNDS[kind]();
@@ -892,17 +907,43 @@ function checkAlerts(){
 }
 
 // Ulang peringatan setiap 30 saat selagi ada tugas yang belum diurus
-let lastRemind=0;
+let lastRemind=0, snoozeUntil=0;
+function pendingFor(){
+  if(!S.loaded||S.date!==nowParts().date) return {baru:[],sedia:[]};
+  return {baru:canKitchen()?S.orders.filter(o=>["Menunggu",""].includes(o.status||"")):[],
+          sedia:canWaiter()?S.orders.filter(o=>o.status==="Siap"&&(myRoles().penyelia||o.w===S.me)):[]};
+}
 function remind(){
-  if(!SND.on||!SND.repeat||!S.loaded||S.date!==nowParts().date||document.visibilityState!=="visible") return;
-  if(Date.now()-lastRemind<29000) return;
-  const now=nowParts().time;
-  const waiting=S.orders.filter(o=>["Menunggu",""].includes(o.status||""));
-  const ready=S.orders.filter(o=>o.status==="Siap");
-  const doingLate=S.orders.filter(o=>o.status==="Diterima"&&since(o.t,now)>=LATE);
-  if(canKitchen()&&waiting.length){ alertSound("baru"); lastRemind=Date.now(); return; }
-  if(canWaiter()&&ready.length){ alertSound("sedia"); lastRemind=Date.now(); return; }
-  if(canKitchen()&&doingLate.length){ alertSound("lewat"); lastRemind=Date.now(); }
+  renderAlarm();
+  if(!SND.on||!S.loaded||S.date!==nowParts().date||document.visibilityState!=="visible") return;
+  const pd=pendingFor(), now=nowParts().time, alarmOn=SND.alarm&&Date.now()>=snoozeUntil;
+  const gap=alarmOn&&(pd.baru.length||pd.sedia.length)?2600:29000;
+  if(Date.now()-lastRemind<gap) return;
+  if(pd.baru.length){ if(alarmOn) alarmSound("alarmBaru"); else if(SND.repeat) alertSound("baru"); else return; lastRemind=Date.now(); return; }
+  if(pd.sedia.length){ if(alarmOn) alarmSound("alarmSedia"); else if(SND.repeat) alertSound("sedia"); else return; lastRemind=Date.now(); return; }
+  const doingLate=canKitchen()?S.orders.filter(o=>o.status==="Diterima"&&since(o.t,now)>=LATE):[];
+  if(SND.repeat&&doingLate.length){ alertSound("lewat"); lastRemind=Date.now(); }
+}
+function alarmSound(kind){
+  const played=SOUNDS[kind]();
+  try{navigator.vibrate&&navigator.vibrate([500,150,500,150,500])}catch(e){}
+  if(!played&&SND.on) renderNotice();
+}
+// Jalur merah berkelip di atas skrin selagi alarm berbunyi
+function renderAlarm(){
+  let bar=document.getElementById("alarmBar");
+  const pd=pendingFor(), n=pd.baru.length+pd.sedia.length;
+  const show=SND.on&&SND.alarm&&n>0;
+  if(!show){ if(bar) bar.remove(); return; }
+  if(!bar){ bar=h("div",{id:"alarmBar",role:"alert"}); document.body.appendChild(bar); }
+  const snoozed=Date.now()<snoozeUntil, left=Math.ceil((snoozeUntil-Date.now())/1000);
+  const txt=pd.baru.length?pd.baru.length+" PESANAN BARU belum diterima: "+pd.baru.map(o=>o.p).join(", ")
+    :pd.sedia.length+" item SEDIA DIAMBIL: "+pd.sedia.map(o=>o.p+" × "+o.q).join(", ");
+  bar.className=snoozed?"snoozed":"";
+  bar.replaceChildren(h("span",{class:"at"},(snoozed?"🔕 ":"🔔 ")+txt),
+    h("span",{class:"ab"},
+      h("button",{type:"button",onclick:()=>{showTab("pesanan");S.seg=pd.baru.length?"baru":"sedia";segTouched=true;renderOrders();}},"Lihat"),
+      snoozed?h("span",{class:"sz"},left+"s"):h("button",{type:"button",onclick:()=>{snoozeUntil=Date.now()+60000;renderAlarm();toast("Alarm disenyapkan 1 minit");}},"Senyap 1 min")));
 }
 
 // Kekalkan skrin menyala (jika peranti benarkan)
@@ -943,13 +984,17 @@ function openSound(){
       pushPanel(draw),
       h("div",{class:"lbl",style:"margin-top:4px"},"Bunyi semasa app dibuka"),
       sw("Bunyi amaran","Pesanan baru & item sedia diambil",SND.on,v=>{SND.on=v;ls.set("dkp_snd",v?"1":"0");renderSound();renderNotice();}),
-      sw("Ulang setiap 30 saat","Berbunyi lagi selagi belum Terima / belum Ambil",SND.repeat,v=>{SND.repeat=v;ls.set("dkp_snd_rep",v?"1":"0");}),
+      sw("Alarm berterusan (kuat)","Berbunyi tanpa henti setiap 3 saat sehingga Terima / Sudah Ambil",SND.alarm,v=>{SND.alarm=v;ls.set("dkp_snd_alarm",v?"1":"0");renderAlarm();}),
+      sw("Ulang setiap 30 saat","Jika alarm berterusan dimatikan",SND.repeat,v=>{SND.repeat=v;ls.set("dkp_snd_rep",v?"1":"0");}),
       sw("Kekalkan skrin menyala",wakeLock?"Aktif":SND.wake?"Peranti ini tidak benarkan — tetapkan masa skrin di tetapan tablet":"Untuk tablet di kaunter",SND.wake,v=>{SND.wake=v;ls.set("dkp_wake",v?"1":"0");applyWake().then(draw);}),
       h("div",{class:"field"},h("div",{class:"lbl"},"Kekuatan bunyi"),vol),
       h("div",{class:"field"},h("div",{class:"lbl"},"Uji bunyi"),
         h("div",{class:"two"},
           h("button",{class:"btn ghost",type:"button",onclick:()=>{unlockAudio();setTimeout(()=>alertSound("baru"),60);}},"Pesanan baru"),
           h("button",{class:"btn ghost",type:"button",onclick:()=>{unlockAudio();setTimeout(()=>alertSound("sedia"),60);}},"Sedia diambil")),
+        h("div",{class:"two"},
+          h("button",{class:"btn ghost",type:"button",onclick:()=>{unlockAudio();setTimeout(()=>alarmSound("alarmBaru"),60);}},"Alarm pesanan baru"),
+          h("button",{class:"btn ghost",type:"button",onclick:()=>{unlockAudio();setTimeout(()=>alarmSound("alarmSedia"),60);}},"Alarm sedia diambil")),
         h("button",{class:"btn ghost",type:"button",onclick:()=>{unlockAudio();setTimeout(()=>alertSound("lewat"),60);}},"Peringatan lewat")),
       h("p",{class:"hint"},(r.dapur||r.penyelia?"Peranti ini dimaklumkan bila ada pesanan baru. ":"")+(r.pelayan||r.penyelia?"Peranti ini dimaklumkan bila item sedia diambil. ":"")+"Bila skrin tutup atau app ditutup, notifikasi telefon akan berbunyi mengikut kekuatan bunyi notifikasi telefon.")
     ]);
@@ -1237,7 +1282,7 @@ function openFromUrl(u){
 
 
 /* ---------- semakan sistem ---------- */
-const NEED_VERSI="v9";
+const NEED_VERSI="v10";
 async function runDiag(){
   const rows=[];
   const ok=(t,d)=>rows.push([true,t,d||""]), bad=(t,d)=>rows.push([false,t,d]);
@@ -1254,7 +1299,7 @@ async function runDiag(){
   if(p){
     p.versi===NEED_VERSI?ok("Code.gs versi terkini"):bad("Code.gs versi terkini","Pelayan "+p.versi+", app perlukan "+NEED_VERSI+". Tampal Code.gs baru → Deploy → New version.");
     p.push?ok("Kunci Firebase di Apps Script","Projek "+p.projek):bad("Kunci Firebase di Apps Script","Apps Script → Project Settings → Script properties → FIREBASE_SA (isi fail .json).");
-    p.peringatan?ok("Peringatan setiap 3 minit"):bad("Peringatan setiap 3 minit","Dalam Apps Script pilih fungsi setupPush → Run sekali.");
+    p.peringatan?ok("Peringatan setiap minit"):bad("Peringatan setiap minit","Dalam Apps Script pilih fungsi setupPush → Run sekali.");
     if(p.push&&fbOk&&p.projek&&fb.projectId&&p.projek!==fb.projectId) bad("Projek Firebase sama","config.js ("+fb.projectId+") berbeza daripada Apps Script ("+p.projek+").");
   }
   const st=pushState();
@@ -1304,7 +1349,7 @@ setInterval(()=>{ tickClock();
 },10000);
 setInterval(()=>{ if(S.tab==="pesanan"&&["baru","buat","sedia"].includes(S.seg)&&!sheets.length) renderOrders(); },30000);
 setInterval(()=>{ if(document.visibilityState==="visible"&&!busy) refresh(); },10000);
-setInterval(remind,5000);
+setInterval(remind,1000);
 $("#diagBtn").onclick=()=>renderDiag($("#diagBox"));
 $("#sndBtn").onclick=openSound; renderSound(); applyWake(); initPush();
 document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible"){ tickClock(); refresh(); } });
