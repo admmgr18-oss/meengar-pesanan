@@ -94,6 +94,24 @@ main{padding-block:16px 120px}
 .tile .pn{font-weight:700;font-size:16.5px;line-height:1.2;overflow-wrap:anywhere;padding-right:24px}
 .tile .pc{font-size:12.5px;color:var(--muted)}
 .tile .dot{position:absolute;top:10px;right:10px;min-width:22px;height:22px;border-radius:11px;background:var(--warn-soft);color:var(--warn);font-family:var(--f-mono);font-size:12px;font-weight:600;display:grid;place-items:center;padding:0 6px}
+.tile .lim{font-size:12px;font-weight:700;color:var(--ok);background:var(--ok-soft);border-radius:6px;padding:2px 7px;align-self:flex-start}
+.tile.lim-soon .lim{color:var(--warn);background:var(--warn-soft)}
+.tile.lim-over,.tile.lim-tiada{background:var(--sunk);box-shadow:none}
+.tile.lim-over .pn,.tile.lim-tiada .pn{color:var(--muted)}
+.tile.lim-over .lim,.tile.lim-tiada .lim{color:var(--bad);background:var(--bad-soft)}
+.limwarn{display:grid;gap:3px;border-radius:12px;padding:12px 14px;background:var(--warn-soft);color:var(--warn);font-size:14px}
+.limwarn b{font-size:16px}
+.limwarn.bad{background:var(--bad-soft);color:var(--bad)}
+.notice.tahap{background:var(--accent-soft);color:var(--accent)}
+.limrow{display:flex;gap:4px;font-family:var(--f-mono);font-size:12px;color:var(--muted)}
+.limrow span{background:var(--sunk);border-radius:5px;padding:1px 5px}
+.limrow span.no{background:var(--bad-soft);color:var(--bad)}
+.limed{display:grid;gap:8px}
+.limrowed{display:grid;grid-template-columns:70px 1fr auto;gap:8px;align-items:center}
+.limrowed .lt{font-weight:700;font-size:14px}
+.limrowed .in{min-height:44px;padding:8px 10px;font-family:var(--f-mono)}
+.limrowed .in:disabled{opacity:.4}
+.limrowed .pill{white-space:nowrap;padding:8px 12px;font-size:14px}
 .tile.other{background:transparent;box-shadow:none;border:2px dashed var(--line);align-items:center;justify-content:center;text-align:center}
 .tile.other .pn{font-weight:600;color:var(--muted);padding:0}
 
@@ -371,6 +389,7 @@ nav.tabs .bdg{position:absolute;top:4px;left:calc(50% + 8px);min-width:18px;heig
       <h3>Menu produk <small id="prodCount"></small></h3>
       <div id="prodRows"></div>
       <div class="two"><button class="btn line" id="catAdd" type="button">+ Kategori</button><button class="btn primary" id="prodAdd" type="button">+ Produk</button></div>
+      <button class="btn ghost wide" id="guideBtn" type="button">Muat jadual Garis Panduan (Tahap 1/2/3)</button>
     </div>
     <div class="card">
       <h3>Staf <small id="stafCount"></small></h3>
@@ -413,7 +432,7 @@ const STATUS=[
   {k:"kurang",label:"Kurang / habis, tidak dipesan",ic:"!",c:"r"},
   {k:"lebih",label:"Berlebihan",ic:"+",c:"a"},
   {k:"lewat",label:'Dipesan selepas had masa / "Tiada Tambah"',ic:"⏱",c:"r"}];
-const REASONS=[{t:"Pelanggan batal",c:"r",ic:"✕"},{t:"Salah pesan",c:"a",ic:"!"},{t:"Stok masih cukup",c:"g",ic:"="},{t:"Lain-lain",c:"n",ic:"…"}];
+const REASONS=[{t:"Lewat had masa / Tiada tambah",c:"r",ic:"⏱"},{t:"Pelanggan batal",c:"r",ic:"✕"},{t:"Salah pesan",c:"a",ic:"!"},{t:"Stok masih cukup",c:"g",ic:"="},{t:"Lain-lain",c:"n",ic:"…"}];
 const ROLES=["pelayan","dapur","penyelia"];
 const ROLE_LBL={pelayan:"Pelayan",dapur:"Pengeluaran",penyelia:"Penyelia"};
 const ROLE_SUB={pelayan:"Buat pesanan",dapur:"Bakeri / dapur",penyelia:"Semakan & T/t"};
@@ -578,7 +597,9 @@ function productTiles(host,catHost,key,onPick,withCounts){
   const tiles=shown.map(({name:p})=>{
     const wait=withCounts?S.orders.filter(o=>o.p===p&&["Menunggu","","Diterima"].includes(o.status||"")).length:0;
     const all=withCounts?S.orders.filter(o=>o.p===p).length:0;
-    return h("button",{class:"tile",type:"button",onclick:()=>{buzz();onPick(p);}},h("span",{class:"pn"},p),wait?h("span",{class:"dot",title:"Menunggu"},wait):null,h("span",{class:"pc"},all?all+" pesanan hari ini":""));});
+    const li=key==="pesanan"&&S.date===nowParts().date?limitInfo(p):{state:"none"}, ll=limitLabel(li);
+    return h("button",{class:"tile lim-"+li.state,type:"button",onclick:()=>{buzz();onPick(p);}},h("span",{class:"pn"},p),wait?h("span",{class:"dot",title:"Menunggu"},wait):null,
+      ll?h("span",{class:"lim"},ll):null,h("span",{class:"pc"},all?all+" pesanan hari ini":""));});
   tiles.push(h("button",{class:"tile other",type:"button",onclick:()=>askText("Produk lain","Nama produk",v=>onPick(v))},h("span",{class:"pn"},items.length?"+ Produk lain":"+ Taip nama produk")));
   host.replaceChildren(...tiles);
 }
@@ -590,6 +611,35 @@ function askText(title,ph,onSave){
   sh.set([inp,h("button",{class:"btn primary wide",type:"button",onclick:go},"Teruskan")]);
   setTimeout(()=>inp.focus(),250);
 }
+
+
+/* ---------- had masa ikut tahap ---------- */
+function curTahap(t){
+  const hd=S.head||{}; let lv=String(hd.tahap||"").replace(/\D/g,"");
+  const adj=String(hd.pelarasan||"").toLowerCase(), to=String(hd.keTahap||"").replace(/\D/g,""), jam=hd.jam||"";
+  if((adj==="naik"||adj==="turun")&&to&&/^\d\d:\d\d$/.test(jam)&&(t||nowParts().time)>=jam) lv=to;
+  return lv;
+}
+function itemOf(name){return (S.config.items||[]).find(x=>x.name.toLowerCase()===String(name).toLowerCase());}
+// {lv, had, state:'none'|'ok'|'soon'|'over'|'tiada', mins}
+function limitInfo(name,t){
+  t=t||nowParts().time; const lv=curTahap(t), it=itemOf(name), out={lv,had:"",state:"none",mins:null};
+  if(!lv||!it) return out;
+  const lim=it["t"+lv]||"";
+  if(lim==="TIADA"){out.had="TIADA";out.state="tiada";return out;}
+  if(!lim) return out;
+  out.had=lim; const d=mins(lim)-mins(t); out.mins=d;
+  out.state=d<0?"over":d<=15?"soon":"ok";
+  return out;
+}
+function limitLabel(li){
+  if(li.state==="tiada") return "Tiada tambah";
+  if(li.state==="over") return "Tamat "+li.had;
+  if(li.state==="soon") return "Had "+li.had+" · "+li.mins+" min lagi";
+  if(li.state==="ok") return "Had "+li.had;
+  return "";
+}
+function fmtLim(v){return v==="TIADA"?"Tiada":v||"–";}
 
 /* ---------- order sheet ---------- */
 function timeChip(state){
@@ -612,13 +662,20 @@ function openOrder(prod){
   const chip=timeChip(st);
   function draw(){
     let wNames=L().pelayan.slice(); if(st.w&&!wNames.includes(st.w)) wNames.unshift(st.w);
-    const send=h("button",{class:"btn primary wide",type:"button"},svg("check"),"Hantar ke Pengeluaran");
+    const li=limitInfo(prod,st.t||nowParts().time), blocked=li.state==="over"||li.state==="tiada";
+    const send=h("button",{class:"btn "+(blocked?"danger":"primary")+" wide",type:"button"},svg("check"),blocked?"Faham, hantar juga":"Hantar ke Pengeluaran");
     send.onclick=()=>{
       if(!st.w){toast("Pilih nama pelayan dahulu",true);return;}
       send.disabled=true;
       call("api_addOrder",[{id:rid(),t:st.t||nowParts().time,p:prod,w:st.w,r:""}],prod+" dihantar ke pengeluaran").then(ok=>{ if(ok){sh.close();S.seg="baru";renderOrders();} else send.disabled=false; });
     };
+    const warnBox=li.state==="tiada"?h("div",{class:"limwarn bad"},h("b",null,"⚠ TIADA TAMBAH untuk item ini"),h("span",null,"Garis panduan Tahap "+li.lv+": item ini tidak boleh dipesan tambah. Hantar hanya dengan kebenaran penyelia. Pengeluaran akan nampak amaran ini."))
+      :li.state==="over"?h("div",{class:"limwarn bad"},h("b",null,"⚠ Masa tambah sudah tamat"),h("span",null,"Had Tahap "+li.lv+": "+li.had+" (lewat "+(-li.mins)+" min). Pengeluaran akan nampak amaran ini dan boleh tolak pesanan."))
+      :li.state==="soon"?h("div",{class:"limwarn"},h("b",null,"Had masa "+li.had+" (Tahap "+li.lv+")"),h("span",null,"Tinggal "+li.mins+" minit lagi."))
+      :li.state==="ok"?h("p",{class:"hint"},"Had masa tambah: "+li.had+" (Tahap "+li.lv+")")
+      :!li.lv?h("p",{class:"hint"},"Tahap hari ini belum ditetapkan — had masa tidak disemak."):null;
     sh.set([
+      warnBox,
       h("div",{class:"field"},h("div",{class:"lbl"},"Masa pesan"),chip),
       h("div",{class:"field"},h("div",{class:"lbl"},"Nama pelayan"),peopleGrid(wNames,st.w,n=>{st.w=n;draw();},"pelayan")),
       h("p",{class:"hint"},"Pengeluaran akan tekan Terima, kemudian Siap dengan kuantiti. Anda akan nampak bila item sedia diambil."),
@@ -730,6 +787,7 @@ function renderOrders(){
       else if(K&&accepted) act=h("div",{class:"t-act"},h("button",{class:"btn ok",type:"button",onclick:()=>openDone(o)},svg("check"),"Siap"),armBtn("Batal terima","Pasti? Tekan lagi",()=>call("api_undoAccept",[o.id],"Dikembalikan ke Baru")));
       else act=h("div",{class:"t-act"},info(accepted?"Sedang dibuat oleh "+(o.r||"pengeluaran"):"Menunggu pengeluaran terima…"),h("button",{class:"btn line bad sm",type:"button",onclick:()=>openCancel(o)},"Batal"));
       return h("div",{class:"ticket "+(accepted?"doing":"wait")+(late?" late":"")},
+        o.lewat?h("div",{class:"t-note"},"⚠ "+o.lewat.toUpperCase()+(o.lv?" ("+o.lv+")":"")+" — pastikan dengan penyelia sebelum buat"):null,
         h("div",{class:"t-top"},h("div",{class:"main"},h("div",{class:"t-prod"},o.p),whoLine(o),accepted?h("div",{class:"t-meta"},h("span",{class:"who"},"Diterima ",av(o.r,"s"),o.r+" · "+(o.ta||""))):null),
           h("div",{class:"timer"},h("div",{class:"big"},m==null?o.t:m+"′"),h("div",{class:"lbl"},m==null?"dipesan":"sejak pesan"),m==null?null:h("div",{class:"sm"},o.t))),
         act);
@@ -942,7 +1000,7 @@ function renderHari(){
   const avg=mean(S.orders.filter(o=>o.status==="Siap"||o.status==="Diambil").map(o=>o.dur));
   const avgP=mean(g.selesai.map(o=>o.pdur));
   const open=g.baru.length+g.buat.length;
-  const st=[["Pesanan",S.orders.length,""],["Belum siap",open,open?"warn":""],["Sedia diambil",g.sedia.length,g.sedia.length?"warn":""],["Purata siap",avg==null?"–":avg+"′",""],["Purata ambil",avgP==null?"–":avgP+"′",""],["Dibatalkan",g.cx.length,g.cx.length?"bad":""],["Semakan",cs.length,""],["Tidak patuh",bad.length,bad.length?"bad":(cs.length?"ok":"")]];
+  const st=[["Pesanan",S.orders.length,""],["Belum siap",open,open?"warn":""],["Sedia diambil",g.sedia.length,g.sedia.length?"warn":""],["Purata siap",avg==null?"–":avg+"′",""],["Purata ambil",avgP==null?"–":avgP+"′",""],["Dibatalkan",g.cx.length,g.cx.length?"bad":""],["Lewat had",S.orders.filter(o=>o.lewat).length,S.orders.some(o=>o.lewat)?"bad":""],["Semakan",cs.length,""],["Tidak patuh",bad.length,bad.length?"bad":(cs.length?"ok":"")]];
   $("#stats").replaceChildren(...st.map(([l,n,c])=>h("div",{class:"stat "+c},h("div",{class:"n"},n),h("div",{class:"l"},l))));
   $("#perSub").textContent=S.date===nowParts().date?"hari ini":dayLabel(S.date);
   const per={};const P=k=>per[k]=per[k]||{o:0,c:0,x:0};
@@ -958,7 +1016,9 @@ function renderHead(){
   const d=headDraft, mark=()=>{d.dirty=true;};
   const pb=(val,ph,onClick)=>h("button",{class:"pickbtn",type:"button",onclick:onClick},val?av(val):null,val?h("span",{class:"nm"},val):h("span",{class:"ph"},ph));
   const pills=(opts,cur,set)=>h("div",{class:"pills"},opts.map(([v,l])=>h("button",{class:"pill",type:"button","aria-pressed":String(cur===v),onclick:()=>{buzz();set(v);mark();renderHead();}},l)));
+  const lvNow=curTahap();
   const kids=[h("h3",null,"Maklumat hari",h("small",null,"diisi oleh penyelia")),
+    h("div",{class:"notice "+(lvNow?"":"warn"),style:lvNow?"background:var(--accent-soft);color:var(--accent)":""},h("b",null,lvNow?"Tahap berkuat kuasa sekarang: Tahap "+lvNow:"Tahap hari ini belum disimpan"),h("span",null,lvNow?"Had masa tambah setiap item ikut tahap ini.":"Pilih tahap di bawah dan tekan Simpan.")),
     h("div",{class:"field"},h("div",{class:"lbl"},"Penyelia bertugas"),pb(d.penyelia,"Pilih penyelia",()=>pickPerson("Penyelia bertugas","penyelia",d.penyelia,n=>{d.penyelia=n;mark();renderHead();}))),
     h("div",{class:"field"},h("div",{class:"lbl"},"Tahap ditetapkan oleh pengurus"),pills([["1","Tahap 1"],["2","Tahap 2"],["3","Tahap 3"]],d.tahap,v=>d.tahap=v)),
     h("div",{class:"field"},h("div",{class:"lbl"},"Pelarasan oleh penyelia"),pills([["tiada","Tiada"],["naik","Naik"],["turun","Turun"]],d.adj,v=>d.adj=v))];
@@ -1009,21 +1069,22 @@ function openStaff(st,presetRole,after){
   }
   draw(); if(!st) setTimeout(()=>name.focus(),250);
 }
-function saveCatalog(items,cats,msg){return call("api_saveCatalog",[items.map(x=>({name:x.name,cat:x.cat||""})),cats],msg);}
-function catalog(){const {items}=catOptions();return {items:items.map(x=>({name:x.name,cat:x.cat||""})),cats:(S.config.categories||[]).slice()};}
+function saveCatalog(items,cats,msg){return call("api_saveCatalog",[items.map(x=>({name:x.name,cat:x.cat||"",t1:x.t1||"",t2:x.t2||"",t3:x.t3||""})),cats],msg);}
+function catalog(){const {items}=catOptions();return {items:items.map(x=>({name:x.name,cat:x.cat||"",t1:x.t1||"",t2:x.t2||"",t3:x.t3||""})),cats:(S.config.categories||[]).slice()};}
 function catPills(cats,cur,set,onNew){
   return h("div",{class:"pills"},[...cats.map(c=>[c,c]),["","Tiada kategori"]].map(([v,l])=>h("button",{class:"pill",type:"button","aria-pressed":String(cur===v),onclick:()=>{buzz();set(v);}},l)),
     h("button",{class:"pill",type:"button",style:"border-style:dashed",onclick:onNew},"+ Kategori baru"));
 }
 function openProduct(i,presetCat){
   const C=catalog(), isNew=i==null;
-  const d={name:isNew?"":C.items[i].name,cat:isNew?(presetCat||""):C.items[i].cat};
+  const d=isNew?{name:"",cat:presetCat||"",t1:"",t2:"",t3:""}:Object.assign({},C.items[i]);
   const inp=h("input",{class:"in",value:d.name,placeholder:"Nama produk, contoh: Roti Kaya",maxlength:"80"});
   inp.oninput=()=>d.name=inp.value;
   const sh=openSheet({title:isNew?"Tambah produk":"Ubah produk"});
   const save=()=>{const v=d.name.replace(/\s+/g," ").trim();if(!v){inp.focus();return;}
     if(C.items.some((p,j)=>j!==i&&p.name.toLowerCase()===v.toLowerCase())){toast("Produk ini sudah ada",true);return;}
-    if(isNew)C.items.push({name:v,cat:d.cat});else C.items[i]={name:v,cat:d.cat};
+    const rec={name:v,cat:d.cat,t1:d.t1,t2:d.t2,t3:d.t3};
+    if(isNew)C.items.push(rec);else C.items[i]=rec;
     saveCatalog(C.items,C.cats,isNew?v+" ditambah":"Produk dikemas kini").then(ok=>{if(ok)sh.close();});};
   inp.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();save();}});
   const move=dir=>{const same=C.items.map((x,j)=>[x,j]).filter(([x])=>x.cat===C.items[i].cat).map(([,j])=>j);const k=same.indexOf(i), j=same[k+dir];if(j==null)return;
@@ -1031,6 +1092,7 @@ function openProduct(i,presetCat){
   function draw(){
     const same=isNew?[]:C.items.map((x,j)=>[x,j]).filter(([x])=>x.cat===C.items[i].cat).map(([,j])=>j), k=same.indexOf(i);
     sh.set([h("div",{class:"field"},h("div",{class:"lbl"},"Nama produk"),inp),
+      h("div",{class:"field"},h("div",{class:"lbl"},"Had masa tambah",h("span",{class:"opt"},"ikut tahap hari itu")),limEditor(d,draw)),
       h("div",{class:"field"},h("div",{class:"lbl"},"Kategori"),catPills(C.cats,d.cat,v=>{d.cat=v;draw();},()=>askText("Kategori baru","Contoh: Roti, Kuih, Minuman",v=>{if(!C.cats.some(c=>c.toLowerCase()===v.toLowerCase()))C.cats.push(v);d.cat=C.cats.find(c=>c.toLowerCase()===v.toLowerCase());draw();}))),
       isNew?null:h("div",{class:"two"},h("button",{class:"btn ghost",type:"button",disabled:k<=0,onclick:()=>move(-1)},"↑ Ke atas"),h("button",{class:"btn ghost",type:"button",disabled:k<0||k>=same.length-1,onclick:()=>move(1)},"↓ Ke bawah")),
       h("button",{class:"btn primary wide",type:"button",onclick:save},isNew?"Tambah":"Simpan"),
@@ -1057,7 +1119,8 @@ function openCategory(ci){
 function renderCatalog(){
   const C=catalog();
   $("#prodCount").textContent=C.cats.length+" kategori · "+C.items.length+" produk";
-  const prodRow=(x,i)=>h("button",{class:"row",type:"button",onclick:()=>openProduct(i)},h("span",{class:"nm"},x.name),h("span",{class:"chev"}));
+  const prodRow=(x,i)=>h("button",{class:"row",type:"button",onclick:()=>openProduct(i)},h("span",{class:"nm"},x.name),
+    (x.t1||x.t2||x.t3)?h("span",{class:"limrow"},[1,2,3].map(n=>h("span",{class:x["t"+n]==="TIADA"?"no":""},fmtLim(x["t"+n])))):null,h("span",{class:"chev"}));
   const groups=C.cats.map((c,ci)=>{
     const its=C.items.map((x,i)=>[x,i]).filter(([x])=>x.cat===c);
     return h("div",{class:"catgroup"},
@@ -1085,6 +1148,17 @@ function renderTetapan(){
 $("#stafAdd").onclick=()=>openStaff(null,S.stafFilter);
 $("#prodAdd").onclick=()=>openProduct(null,(S.config.categories||[])[0]||"");
 $("#catAdd").onclick=()=>openCategory(null);
+$("#guideBtn").onclick=e=>{const b=e.currentTarget;if(b.dataset.arm!=="1"){b.dataset.arm="1";b.textContent="Pasti? Masa produk sama nama akan diganti";setTimeout(()=>{b.dataset.arm="";b.textContent="Muat jadual Garis Panduan (Tahap 1/2/3)";},4000);return;}
+  b.disabled=true;call("api_loadGuideline",[],"Jadual Garis Panduan dimuatkan").then(()=>{b.disabled=false;b.dataset.arm="";b.textContent="Muat jadual Garis Panduan (Tahap 1/2/3)";});};
+function limEditor(d,redraw){
+  return h("div",{class:"limed"},[1,2,3].map(n=>{const k="t"+n, v=d[k]||"";
+    const tm=h("input",{class:"in",type:"time",value:/^\d\d:\d\d$/.test(v)?v:"",disabled:v==="TIADA","aria-label":"Had Tahap "+n});
+    tm.onchange=()=>{d[k]=tm.value||"";};
+    return h("div",{class:"limrowed"},h("span",{class:"lt"},"Tahap "+n),tm,
+      h("button",{class:"pill",type:"button","aria-pressed":String(v==="TIADA"),onclick:()=>{d[k]=v==="TIADA"?"":"TIADA";redraw();}},"Tiada tambah"));}),
+    h("button",{class:"link",type:"button",style:"color:var(--accent)",onclick:()=>{d.t2=d.t1;d.t3=d.t1;redraw();}},"Salin Tahap 1 ke Tahap 2 & 3"),
+    h("p",{class:"hint"},"Kosong = tiada had masa."));
+}
 
 
 /* ---------- notifikasi telefon (berfungsi walaupun skrin tutup) ---------- */
@@ -1163,7 +1237,7 @@ function openFromUrl(u){
 
 
 /* ---------- semakan sistem ---------- */
-const NEED_VERSI="v8";
+const NEED_VERSI="v9";
 async function runDiag(){
   const rows=[];
   const ok=(t,d)=>rows.push([true,t,d||""]), bad=(t,d)=>rows.push([false,t,d]);
@@ -1207,7 +1281,10 @@ async function renderDiag(host){
 /* ---------- render ---------- */
 function renderNotice(){
   const today=nowParts().date;
-  $("#dayNotice").replaceChildren(pushNotice()||soundNotice()||"",S.date!==today?h("div",{class:"notice warn"},h("span",null,"Anda sedang melihat "+dayLabel(S.date)+"."),h("button",{type:"button",onclick:()=>goDate(today)},"Kembali ke hari ini")):"");
+  const lvN=curTahap();
+  const tahapBar=S.loaded&&S.date===today?h("div",{class:"notice "+(lvN?"tahap":"warn")},h("span",null,lvN?h("b",null,"Tahap "+lvN+" hari ini"):"Tahap hari ini belum ditetapkan — penyelia tetapkan di Hari Ini."),
+    lvN?null:h("button",{type:"button",onclick:()=>showTab("hari")},"Tetapkan")):"";
+  $("#dayNotice").replaceChildren(pushNotice()||soundNotice()||"",tahapBar,S.date!==today?h("div",{class:"notice warn"},h("span",null,"Anda sedang melihat "+dayLabel(S.date)+"."),h("button",{type:"button",onclick:()=>goDate(today)},"Kembali ke hari ini")):"");
 }
 function renderAll(){
   renderMe(); renderNotice();
