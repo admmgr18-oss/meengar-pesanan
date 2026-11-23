@@ -1,5 +1,5 @@
 /* Service worker: papar notifikasi walaupun app ditutup / skrin padam. */
-const CACHE = "dkp-shell-v6";
+const CACHE = "dkp-shell-v7";
 const SHELL = ["./", "./index.html", "./config.js", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/badge-72.png"];
 
 self.addEventListener("install", e => {
