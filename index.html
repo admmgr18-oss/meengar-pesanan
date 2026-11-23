@@ -445,6 +445,7 @@ const ROLES=["pelayan","dapur","penyelia"];
 const ROLE_LBL={pelayan:"Pelayan",dapur:"Pengeluaran",penyelia:"Penyelia"};
 const ROLE_SUB={pelayan:"Buat pesanan",dapur:"Bakeri / dapur",penyelia:"Semakan & T/t"};
 const LATE=20; // minit menunggu sebelum tiket jadi merah
+const DOING_MAX=40; // minit di "Dibuat" sebelum alarm berterusan
 
 /* ---------- helpers ---------- */
 function h(tag,attrs,...kids){
@@ -789,7 +790,8 @@ function renderOrders(){
   host.replaceChildren(...list.map(o=>{
     if(S.seg==="baru"||S.seg==="buat"){
       const m=today?since(o.t,now.time):null, accepted=S.seg==="buat";
-      const late=m!=null&&m>=LATE;
+      const md=accepted&&today?since(o.ta||o.t,now.time):null;
+      const late=accepted?(md!=null&&md>=DOING_MAX):(m!=null&&m>=LATE);
       let act;
       if(K&&!accepted) act=h("div",{class:"t-act"},h("button",{class:"btn primary",type:"button",onclick:e=>{e.currentTarget.disabled=true;call("api_acceptOrder",[o.id,nowParts().time,S.me],"Diterima: "+o.p);}},svg("check"),"Terima"),h("button",{class:"btn line bad",type:"button",onclick:()=>openCancel(o)},"Batal"));
       else if(K&&accepted) act=h("div",{class:"t-act"},h("button",{class:"btn ok",type:"button",onclick:()=>openDone(o)},svg("check"),"Siap"),armBtn("Batal terima","Pasti? Tekan lagi",()=>call("api_undoAccept",[o.id],"Dikembalikan ke Baru")));
@@ -797,7 +799,9 @@ function renderOrders(){
       return h("div",{class:"ticket "+(accepted?"doing":"wait")+(late?" late":"")},
         o.lewat?h("div",{class:"t-note"},"⚠ "+o.lewat.toUpperCase()+(o.lv?" ("+o.lv+")":"")+" — pastikan dengan penyelia sebelum buat"):null,
         h("div",{class:"t-top"},h("div",{class:"main"},h("div",{class:"t-prod"},o.p),whoLine(o),accepted?h("div",{class:"t-meta"},h("span",{class:"who"},"Diterima ",av(o.r,"s"),o.r+" · "+(o.ta||""))):null),
-          h("div",{class:"timer"},h("div",{class:"big"},m==null?o.t:m+"′"),h("div",{class:"lbl"},m==null?"dipesan":"sejak pesan"),m==null?null:h("div",{class:"sm"},o.t))),
+          accepted&&md!=null?h("div",{class:"timer"},h("div",{class:"big"},md+"′"),h("div",{class:"lbl"},"sedang dibuat"),h("div",{class:"sm"},"sejak "+(o.ta||o.t)))
+          :h("div",{class:"timer"},h("div",{class:"big"},m==null?o.t:m+"′"),h("div",{class:"lbl"},m==null?"dipesan":"sejak pesan"),m==null?null:h("div",{class:"sm"},o.t))),
+        accepted&&late?h("div",{class:"t-note"},"⏰ Sudah dibuat lebih "+DOING_MAX+" minit — sila siapkan atau maklumkan penyelia"):null,
         act);
     }
     if(S.seg==="sedia"){
@@ -909,40 +913,43 @@ function checkAlerts(){
 // Ulang peringatan setiap 30 saat selagi ada tugas yang belum diurus
 let lastRemind=0, snoozeUntil=0;
 function pendingFor(){
-  if(!S.loaded||S.date!==nowParts().date) return {baru:[],sedia:[]};
+  if(!S.loaded||S.date!==nowParts().date) return {baru:[],sedia:[],lewat:[]};
+  const now=nowParts().time;
   return {baru:canKitchen()?S.orders.filter(o=>["Menunggu",""].includes(o.status||"")):[],
+          lewat:canKitchen()?S.orders.filter(o=>o.status==="Diterima"&&since(o.ta||o.t,now)>=DOING_MAX):[],
           sedia:canWaiter()?S.orders.filter(o=>o.status==="Siap"&&(myRoles().penyelia||o.w===S.me)):[]};
 }
 function remind(){
   renderAlarm();
   if(!SND.on||!S.loaded||S.date!==nowParts().date||document.visibilityState!=="visible") return;
   const pd=pendingFor(), now=nowParts().time, alarmOn=SND.alarm&&Date.now()>=snoozeUntil;
-  const gap=alarmOn&&(pd.baru.length||pd.sedia.length)?2600:29000;
+  const gap=alarmOn&&(pd.baru.length||pd.sedia.length||pd.lewat.length)?2600:29000;
   if(Date.now()-lastRemind<gap) return;
   if(pd.baru.length){ if(alarmOn) alarmSound("alarmBaru"); else if(SND.repeat) alertSound("baru"); else return; lastRemind=Date.now(); return; }
+  if(pd.lewat.length){ if(alarmOn) alarmSound("alarmLewat"); else if(SND.repeat) alertSound("lewat"); else return; lastRemind=Date.now(); return; }
   if(pd.sedia.length){ if(alarmOn) alarmSound("alarmSedia"); else if(SND.repeat) alertSound("sedia"); else return; lastRemind=Date.now(); return; }
-  const doingLate=canKitchen()?S.orders.filter(o=>o.status==="Diterima"&&since(o.t,now)>=LATE):[];
-  if(SND.repeat&&doingLate.length){ alertSound("lewat"); lastRemind=Date.now(); }
 }
 function alarmSound(kind){
-  const played=SOUNDS[kind]();
+  const played=(kind==="alarmLewat"?SOUNDS.alarmBaru:SOUNDS[kind])();
   try{navigator.vibrate&&navigator.vibrate([500,150,500,150,500])}catch(e){}
   if(!played&&SND.on) renderNotice();
 }
 // Jalur merah berkelip di atas skrin selagi alarm berbunyi
 function renderAlarm(){
   let bar=document.getElementById("alarmBar");
-  const pd=pendingFor(), n=pd.baru.length+pd.sedia.length;
+  const pd=pendingFor(), n=pd.baru.length+pd.sedia.length+pd.lewat.length;
   const show=SND.on&&SND.alarm&&n>0;
   if(!show){ if(bar) bar.remove(); return; }
   if(!bar){ bar=h("div",{id:"alarmBar",role:"alert"}); document.body.appendChild(bar); }
   const snoozed=Date.now()<snoozeUntil, left=Math.ceil((snoozeUntil-Date.now())/1000);
+  const now=nowParts().time;
   const txt=pd.baru.length?pd.baru.length+" PESANAN BARU belum diterima: "+pd.baru.map(o=>o.p).join(", ")
+    :pd.lewat.length?pd.lewat.length+" item DIBUAT LEBIH "+DOING_MAX+" MINIT: "+pd.lewat.map(o=>o.p+" ("+since(o.ta||o.t,now)+"′)").join(", ")
     :pd.sedia.length+" item SEDIA DIAMBIL: "+pd.sedia.map(o=>o.p+" × "+o.q).join(", ");
   bar.className=snoozed?"snoozed":"";
   bar.replaceChildren(h("span",{class:"at"},(snoozed?"🔕 ":"🔔 ")+txt),
     h("span",{class:"ab"},
-      h("button",{type:"button",onclick:()=>{showTab("pesanan");S.seg=pd.baru.length?"baru":"sedia";segTouched=true;renderOrders();}},"Lihat"),
+      h("button",{type:"button",onclick:()=>{showTab("pesanan");S.seg=pd.baru.length?"baru":pd.lewat.length?"buat":"sedia";segTouched=true;renderOrders();}},"Lihat"),
       snoozed?h("span",{class:"sz"},left+"s"):h("button",{type:"button",onclick:()=>{snoozeUntil=Date.now()+60000;renderAlarm();toast("Alarm disenyapkan 1 minit");}},"Senyap 1 min")));
 }
 
@@ -984,7 +991,7 @@ function openSound(){
       pushPanel(draw),
       h("div",{class:"lbl",style:"margin-top:4px"},"Bunyi semasa app dibuka"),
       sw("Bunyi amaran","Pesanan baru & item sedia diambil",SND.on,v=>{SND.on=v;ls.set("dkp_snd",v?"1":"0");renderSound();renderNotice();}),
-      sw("Alarm berterusan (kuat)","Berbunyi tanpa henti setiap 3 saat sehingga Terima / Sudah Ambil",SND.alarm,v=>{SND.alarm=v;ls.set("dkp_snd_alarm",v?"1":"0");renderAlarm();}),
+      sw("Alarm berterusan (kuat)","Tanpa henti sehingga Terima / Sudah Ambil, dan bila Dibuat lebih "+DOING_MAX+" minit",SND.alarm,v=>{SND.alarm=v;ls.set("dkp_snd_alarm",v?"1":"0");renderAlarm();}),
       sw("Ulang setiap 30 saat","Jika alarm berterusan dimatikan",SND.repeat,v=>{SND.repeat=v;ls.set("dkp_snd_rep",v?"1":"0");}),
       sw("Kekalkan skrin menyala",wakeLock?"Aktif":SND.wake?"Peranti ini tidak benarkan — tetapkan masa skrin di tetapan tablet":"Untuk tablet di kaunter",SND.wake,v=>{SND.wake=v;ls.set("dkp_wake",v?"1":"0");applyWake().then(draw);}),
       h("div",{class:"field"},h("div",{class:"lbl"},"Kekuatan bunyi"),vol),
@@ -1282,7 +1289,7 @@ function openFromUrl(u){
 
 
 /* ---------- semakan sistem ---------- */
-const NEED_VERSI="v10";
+const NEED_VERSI="v11";
 async function runDiag(){
   const rows=[];
   const ok=(t,d)=>rows.push([true,t,d||""]), bad=(t,d)=>rows.push([false,t,d]);
