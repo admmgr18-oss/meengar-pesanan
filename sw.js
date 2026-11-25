@@ -1,5 +1,5 @@
 /* Service worker: papar notifikasi walaupun app ditutup / skrin padam. */
-const CACHE = "dkp-shell-v7";
+const CACHE = "dkp-shell-v8";
 const SHELL = ["./", "./index.html", "./config.js", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/badge-72.png"];
 
 self.addEventListener("install", e => {
@@ -29,7 +29,7 @@ self.addEventListener("push", e => {
     icon: "icons/icon-192.png",
     badge: "icons/badge-72.png",
     vibrate: kind === "sedia" ? [400, 150, 400, 150, 400] : [600, 200, 600, 200, 600],
-    data: { kind, url: "./?tab=pesanan&seg=" + (kind === "sedia" ? "sedia" : "baru") }
+    data: { kind, url: "./?tab=pesanan&seg=" + (kind === "sedia" ? "sedia" : kind === "buat" ? "buat" : "baru") }
   };
   e.waitUntil((async () => {
     const cs = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
